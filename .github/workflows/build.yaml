@@ -33,4 +33,10 @@ jobs:
       run: npm install
 
     - name: CDK Deploy
+      env:
+        CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+        CDK_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+        APEX_DOMAIN: ${{ secrets.APEX_DOMAIN }}
+        SUBDOMAIN: ${{ secrets.SUBDOMAIN }}
+        STACK_ID: ${{ github.ref_name }}
       run: npx aws-cdk deploy --require-approval never
