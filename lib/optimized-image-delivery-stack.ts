@@ -9,6 +9,7 @@ import {
     Distribution,
     HttpVersion,
     IOrigin,
+    LambdaEdgeEventType,
     OriginBindConfig,
     PriceClass,
     SecurityPolicyProtocol,
@@ -19,8 +20,12 @@ import {Construct} from 'constructs';
 import {AaaaRecord, ARecord, PublicHostedZone, RecordTarget} from "aws-cdk-lib/aws-route53";
 import {DnsValidatedCertificate} from "aws-cdk-lib/aws-certificatemanager";
 import {BlockPublicAccess, Bucket, HttpMethods} from "aws-cdk-lib/aws-s3";
-import {PolicyStatement} from "aws-cdk-lib/aws-iam";
+import {CompositePrincipal, ManagedPolicy, PolicyStatement, Role, ServicePrincipal} from "aws-cdk-lib/aws-iam";
 import {CloudFrontTarget} from "aws-cdk-lib/aws-route53-targets";
+import {NodejsFunction} from "aws-cdk-lib/aws-lambda-nodejs";
+import {Architecture, Runtime} from "aws-cdk-lib/aws-lambda";
+import {RetentionDays} from "aws-cdk-lib/aws-logs";
+import * as path from 'path';
 
 export interface OptimizedImageDeliveryStackProps extends cdk.StackProps {
     apexDomain: string;
@@ -91,7 +96,29 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
                 viewerProtocolPolicy: ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                 compress: true,
                 allowedMethods: AllowedMethods.ALLOW_GET_HEAD,
-                cachedMethods: CachedMethods.CACHE_GET_HEAD
+                cachedMethods: CachedMethods.CACHE_GET_HEAD,
+                edgeLambdas: [
+                    {
+                        functionVersion: new NodejsFunction(this, 'OptimizedImageDeliveryFunc', {
+                            runtime: Runtime.NODEJS_18_X,
+                            architecture: Architecture.X86_64,
+                            timeout: Duration.seconds(7),
+                            logRetention: RetentionDays.FIVE_DAYS,
+                            functionName: `optimized-img-delivery-ori-req-${stackId}`,
+                            entry: path.join(__dirname, 'lambda@edge', 'origin.request.js'),
+                            handler: 'handler',
+                            memorySize: 128,
+                            role: new Role(this, 'OptimizedImgDeliveryOriReqRole', {
+                                roleName: `optimized-img-delivery-ori-req-${stackId}`,
+                                assumedBy: new CompositePrincipal(new ServicePrincipal('edgelambda.amazonaws.com'), new ServicePrincipal('lambda.amazonaws.com')),
+                                managedPolicies: [
+                                    ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole'),
+                                ]
+                            })
+                        }).currentVersion,
+                        eventType: LambdaEdgeEventType.ORIGIN_REQUEST
+                    },
+                ]
             },
         });
 
