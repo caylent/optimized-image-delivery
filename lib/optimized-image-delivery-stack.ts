@@ -1,5 +1,5 @@
 import * as cdk from 'aws-cdk-lib';
-import {Duration, Fn} from 'aws-cdk-lib';
+import {aws_s3objectlambda as s3objectlambda, Duration, Fn} from 'aws-cdk-lib';
 import {
     AllowedMethods,
     BehaviorOptions,
@@ -19,8 +19,15 @@ import {
 import {Construct} from 'constructs';
 import {AaaaRecord, ARecord, IHostedZone, PublicHostedZone, RecordTarget} from "aws-cdk-lib/aws-route53";
 import {DnsValidatedCertificate} from "aws-cdk-lib/aws-certificatemanager";
-import {BlockPublicAccess, Bucket, HttpMethods} from "aws-cdk-lib/aws-s3";
-import {CompositePrincipal, ManagedPolicy, PolicyStatement, Role, ServicePrincipal} from "aws-cdk-lib/aws-iam";
+import {BlockPublicAccess, Bucket, CfnAccessPoint, HttpMethods} from "aws-cdk-lib/aws-s3";
+import {
+    ArnPrincipal,
+    CompositePrincipal,
+    ManagedPolicy,
+    PolicyStatement,
+    Role,
+    ServicePrincipal
+} from "aws-cdk-lib/aws-iam";
 import {CloudFrontTarget} from "aws-cdk-lib/aws-route53-targets";
 import {NodejsFunction} from "aws-cdk-lib/aws-lambda-nodejs";
 import {Architecture, Runtime} from "aws-cdk-lib/aws-lambda";
@@ -37,23 +44,23 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
     readonly apexDomain: string;
     readonly subdomain: string;
     readonly stack: string;
+    readonly imagesBucket: Bucket;
 
     constructor(scope: Construct, id: string, props: OptimizedImageDeliveryStackProps) {
         super(scope, id, props);
         this.apexDomain = props.apexDomain;
         this.subdomain = props.subdomain;
         this.stack = props.stack;
-
-        const imagesBucket: Bucket = this.imagesBucket();
+        this.imagesBucket = this.createImagesBucket();
 
         const zone = PublicHostedZone.fromLookup(this, "ApexDomain", {
             domainName: this.apexDomain,
         });
         const distribution = this.createCloudfrontDistribution(zone);
 
-        this.allowDistributionToReadS3Bucket(distribution, imagesBucket);
+        this.allowDistributionToReadS3Bucket(distribution);
 
-        this.setS3BucketAsDefaultOrigin(distribution, imagesBucket);
+        this.setS3BucketAsDefaultOrigin(distribution);
 
         this.createDnsRecordsForCloudfrontDistribution(distribution, zone);
     }
@@ -76,7 +83,7 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
         });
     }
 
-    private setS3BucketAsDefaultOrigin(distribution: Distribution, imagesBucket: Bucket) {
+    private setS3BucketAsDefaultOrigin(distribution: Distribution) {
         // Need to use L1 construct for Origin Access Control
         const originAccessControl = new CfnOriginAccessControl(this, 'DefaultOriginAccessControl', {
             originAccessControlConfig: {
@@ -90,7 +97,7 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
         const distributionConfig = cfnDistribution.distributionConfig as any;
         distributionConfig.origins = [
             {
-                domainName: imagesBucket.bucketRegionalDomainName,
+                domainName: this.imagesBucket.bucketRegionalDomainName,
                 id: 'image-bucket',
                 originAccessControlId: originAccessControl.attrId,
                 s3OriginConfig: {}
@@ -99,18 +106,18 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
         distributionConfig.defaultCacheBehavior.targetOriginId = 'image-bucket';
     }
 
-    private allowDistributionToReadS3Bucket(distribution: Distribution, imagesBucket: Bucket) {
+    private allowDistributionToReadS3Bucket(distribution: Distribution) {
         const bucketPolicy = new PolicyStatement();
         const {distributionId} = distribution;
         bucketPolicy.addActions('s3:GetObject');
         bucketPolicy.addServicePrincipal('cloudfront.amazonaws.com');
-        bucketPolicy.addResources(`${imagesBucket.bucketArn}/*`);
+        bucketPolicy.addResources(`${this.imagesBucket.bucketArn}/*`);
         bucketPolicy.addCondition('StringEquals', {
             'AWS:SourceArn': Fn.sub("arn:aws:cloudfront::${AWS::AccountId}:distribution/${distributionId}", {
                 distributionId
             })
         });
-        imagesBucket.addToResourcePolicy(bucketPolicy);
+        this.imagesBucket.addToResourcePolicy(bucketPolicy);
     }
 
     private createCloudfrontDistribution(zone: IHostedZone) {
@@ -126,7 +133,7 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
             } as IOrigin, // because the S3Origin construct doesn't support Origin Access Control yet
         };
 
-        return new Distribution(this, "SiteDistribution", {
+        const distribution = new Distribution(this, "SiteDistribution", {
             domainNames: [`${this.subdomain}.${this.apexDomain}`],
             certificate: siteCertificate,
             errorResponses: [
@@ -158,17 +165,17 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
                 cachedMethods: CachedMethods.CACHE_GET_HEAD,
                 edgeLambdas: [
                     {
-                        functionVersion: new NodejsFunction(this, 'OptimizedImageDeliveryFunc', {
+                        functionVersion: new NodejsFunction(this, 'OptimizedImgDeliveryOriginReqFunc', {
                             runtime: Runtime.NODEJS_18_X,
                             architecture: Architecture.X86_64,
                             timeout: Duration.seconds(7),
                             logRetention: RetentionDays.FIVE_DAYS,
-                            functionName: `optimized-img-delivery-ori-req-${this.stack}`,
+                            functionName: `optimized-image-delivery-ori-req-${this.stack}`,
                             entry: path.join(__dirname, 'lambda@edge', 'origin.request.js'),
                             handler: 'handler',
                             memorySize: 128,
-                            role: new Role(this, 'OptimizedImgDeliveryOriReqRole', {
-                                roleName: `optimized-img-delivery-ori-req-${this.stack}`,
+                            role: new Role(this, 'OptimizedImgDeliveryOriginReqRole', {
+                                roleName: `optimized-image-delivery-ori-req-${this.stack}`,
                                 assumedBy: new CompositePrincipal(new ServicePrincipal('edgelambda.amazonaws.com'), new ServicePrincipal('lambda.amazonaws.com')),
                                 managedPolicies: [
                                     ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole'),
@@ -177,12 +184,34 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
                         }).currentVersion,
                         eventType: LambdaEdgeEventType.ORIGIN_REQUEST
                     },
+                    {
+                        functionVersion: new NodejsFunction(this, 'OptimizedImgDeliveryOriginResFunc', {
+                            runtime: Runtime.NODEJS_18_X,
+                            architecture: Architecture.X86_64,
+                            timeout: Duration.seconds(7),
+                            logRetention: RetentionDays.FIVE_DAYS,
+                            functionName: `optimized-image-delivery-ori-res-${this.stack}`,
+                            entry: path.join(__dirname, 'lambda@edge', 'origin.response.js'),
+                            handler: 'handler',
+                            memorySize: 128,
+                            role: new Role(this, 'OptimizedImgDeliveryOriginResRole', {
+                                roleName: `optimized-image-delivery-ori-res-${this.stack}`,
+                                assumedBy: new CompositePrincipal(new ServicePrincipal('edgelambda.amazonaws.com'), new ServicePrincipal('lambda.amazonaws.com')),
+                                managedPolicies: [
+                                    ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole'),
+                                ]
+                            })
+                        }).currentVersion,
+                        eventType: LambdaEdgeEventType.ORIGIN_RESPONSE
+                    }
                 ]
             },
         });
+        this.createImageTransformationFunction();
+        return distribution;
     }
 
-    private imagesBucket() {
+    private createImagesBucket() {
         return new Bucket(this, "ImagesBucket", {
             bucketName: `optimizedimagedelivery-a79b75-${this.stack}`,
             cors: [
@@ -195,5 +224,95 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
             versioned: false,
             blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
         });
+    }
+
+    private createImageTransformationFunction() {
+        const role = new Role(this, 'ImageTransformationRole', {
+            roleName: `image-transform-${this.stack}`,
+            assumedBy: new CompositePrincipal(new ServicePrincipal('edgelambda.amazonaws.com'), new ServicePrincipal('lambda.amazonaws.com')),
+            managedPolicies: [
+                ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole'),
+            ]
+        });
+
+        const imageTransformationFunction = new NodejsFunction(this, 'ImageTransformationFunc', {
+            runtime: Runtime.NODEJS_18_X,
+            architecture: Architecture.X86_64,
+            timeout: Duration.seconds(40),
+            logRetention: RetentionDays.FIVE_DAYS,
+            functionName: `image-transform-${this.stack}`,
+            entry: path.join(__dirname, 'lambda', 'image-transform.js'),
+            handler: 'handler',
+            memorySize: 10240,
+            role,
+            initialPolicy: [
+                new PolicyStatement({
+                    actions: ['s3:PutObject', 's3:PutObjectTagging'],
+                    resources: [`arn:aws:s3:::${this.imagesBucket.bucketName}/*`],
+                })
+            ],
+            bundling: {
+                forceDockerBundling: true,
+                nodeModules: ['sharp']
+            },
+        });
+
+        imageTransformationFunction.addPermission('OriginResponseInvokePermission', {
+            principal: new ArnPrincipal(`arn:aws:iam::${cdk.Stack.of(this).account}:role/optimized-image-delivery-ori-res-${this.stack}`),
+        });
+
+        const standardAccessPoint = new CfnAccessPoint(this, 'ImageTransformAccessPoint', {
+            bucket: this.imagesBucket.bucketName,
+            name: `image-transform-${this.stack}`,
+            publicAccessBlockConfiguration: {
+                blockPublicAcls: true,
+                blockPublicPolicy: true,
+                ignorePublicAcls: true,
+                restrictPublicBuckets: true
+            }
+        });
+        new s3objectlambda.CfnAccessPoint(this, 'ImgTransAccessPoint460', {
+            objectLambdaConfiguration: {
+                supportingAccessPoint: standardAccessPoint.attrArn,
+                transformationConfigurations: [{
+                    actions: ['GetObject'],
+                    contentTransformation: {
+                        "AwsLambda": {
+                            "FunctionArn": imageTransformationFunction.functionArn,
+                            "FunctionPayload": "webp-20230802-460"
+                        }
+                    }
+                }],
+                allowedFeatures: ['GetObject-Range', 'GetObject-PartNumber'],
+                cloudWatchMetricsEnabled: false,
+            },
+            name: `imgtransf11af8f-${this.stack}`,
+        });
+        new s3objectlambda.CfnAccessPoint(this, 'ImgTransAccessPoint920', {
+            objectLambdaConfiguration: {
+                supportingAccessPoint: standardAccessPoint.attrArn,
+                transformationConfigurations: [{
+                    actions: ['GetObject'],
+                    contentTransformation: {
+                        "AwsLambda": {
+                            "FunctionArn": imageTransformationFunction.functionArn,
+                            "FunctionPayload": "webp-20230802-920"
+                        }
+                    }
+                }],
+                allowedFeatures: ['GetObject-Range', 'GetObject-PartNumber'],
+                cloudWatchMetricsEnabled: false,
+            },
+            name: `imgtransf7a03bd-${this.stack}`,
+        });
+        role.addToPolicy(new PolicyStatement({
+            actions: ['s3-object-lambda:WriteGetObjectResponse'],
+            resources: [
+                `arn:aws:s3-object-lambda:${cdk.Stack.of(this).region}:${cdk.Stack.of(this).account}:accesspoint/imgtransf11af8f-${this.stack}`,
+                `arn:aws:s3-object-lambda:${cdk.Stack.of(this).region}:${cdk.Stack.of(this).account}:accesspoint/imgtransf7a03bd-${this.stack}`
+            ],
+        }));
+
+        return imageTransformationFunction;
     }
 }
