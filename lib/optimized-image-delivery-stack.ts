@@ -24,6 +24,7 @@ import {
     ArnPrincipal,
     CompositePrincipal,
     ManagedPolicy,
+    PolicyDocument,
     PolicyStatement,
     Role,
     ServicePrincipal
@@ -45,6 +46,7 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
     readonly subdomain: string;
     readonly stack: string;
     readonly imagesBucket: Bucket;
+    private readonly _originResponseRef: string;
 
     constructor(scope: Construct, id: string, props: OptimizedImageDeliveryStackProps) {
         super(scope, id, props);
@@ -52,6 +54,7 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
         this.subdomain = props.subdomain;
         this.stack = props.stack;
         this.imagesBucket = this.createImagesBucket();
+        this._originResponseRef = `optimized-image-delivery-ori-res-${this.stack}`;
 
         const zone = PublicHostedZone.fromLookup(this, "ApexDomain", {
             domainName: this.apexDomain,
@@ -132,8 +135,8 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
                 bind: () => ({} as OriginBindConfig)
             } as IOrigin, // because the S3Origin construct doesn't support Origin Access Control yet
         };
-
-        const distribution = new Distribution(this, "SiteDistribution", {
+        const [standardAccessPoint, objectLambdaAccessPoint460, objectLambdaAccessPoint920] = this.createImageTransformationFunction();
+        return new Distribution(this, "SiteDistribution", {
             domainNames: [`${this.subdomain}.${this.apexDomain}`],
             certificate: siteCertificate,
             errorResponses: [
@@ -190,16 +193,42 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
                             architecture: Architecture.X86_64,
                             timeout: Duration.seconds(7),
                             logRetention: RetentionDays.FIVE_DAYS,
-                            functionName: `optimized-image-delivery-ori-res-${this.stack}`,
+                            functionName: this._originResponseRef,
                             entry: path.join(__dirname, 'lambda@edge', 'origin.response.js'),
                             handler: 'handler',
                             memorySize: 128,
                             role: new Role(this, 'OptimizedImgDeliveryOriginResRole', {
-                                roleName: `optimized-image-delivery-ori-res-${this.stack}`,
+                                roleName: this._originResponseRef,
                                 assumedBy: new CompositePrincipal(new ServicePrincipal('edgelambda.amazonaws.com'), new ServicePrincipal('lambda.amazonaws.com')),
                                 managedPolicies: [
                                     ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole'),
-                                ]
+                                ],
+                                inlinePolicies: {
+                                    's3-access-point-read': new PolicyDocument({
+                                        statements: [
+                                            new PolicyStatement({
+                                                actions: ['s3:GetObject', 's3:ListBucket'],
+                                                resources: [
+                                                    standardAccessPoint.attrArn,
+                                                    `${standardAccessPoint.attrArn}/*`,
+                                                ],
+                                                conditions: {
+                                                    'ForAnyValue:StringEquals': {
+                                                        'aws:CalledVia': ['s3-object-lambda.amazonaws.com']
+                                                    }
+                                                }
+                                            })
+                                        ]
+                                    }),
+                                    's3-object-lambda-read': new PolicyDocument({
+                                        statements: [
+                                            new PolicyStatement({
+                                                actions: ['s3-object-lambda:GetObject', 's3-object-lambda:ListBucket'],
+                                                resources: [objectLambdaAccessPoint460.attrArn, objectLambdaAccessPoint920.attrArn]
+                                            })
+                                        ]
+                                    })
+                                }
                             })
                         }).currentVersion,
                         eventType: LambdaEdgeEventType.ORIGIN_RESPONSE
@@ -207,8 +236,6 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
                 ]
             },
         });
-        this.createImageTransformationFunction();
-        return distribution;
     }
 
     private createImagesBucket() {
@@ -258,7 +285,7 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
         });
 
         imageTransformationFunction.addPermission('OriginResponseInvokePermission', {
-            principal: new ArnPrincipal(`arn:aws:iam::${cdk.Stack.of(this).account}:role/optimized-image-delivery-ori-res-${this.stack}`),
+            principal: new ArnPrincipal(`arn:aws:iam::${cdk.Stack.of(this).account}:role/${this._originResponseRef}`),
         });
 
         const standardAccessPoint = new CfnAccessPoint(this, 'ImageTransformAccessPoint', {
@@ -271,7 +298,7 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
                 restrictPublicBuckets: true
             }
         });
-        new s3objectlambda.CfnAccessPoint(this, 'ImgTransAccessPoint460', {
+         const objectLambdaAccessPoint460 = new s3objectlambda.CfnAccessPoint(this, 'ImgTransAccessPoint460', {
             objectLambdaConfiguration: {
                 supportingAccessPoint: standardAccessPoint.attrArn,
                 transformationConfigurations: [{
@@ -288,7 +315,7 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
             },
             name: `imgtransf11af8f-${this.stack}`,
         });
-        new s3objectlambda.CfnAccessPoint(this, 'ImgTransAccessPoint920', {
+        const objectLambdaAccessPoint920 = new s3objectlambda.CfnAccessPoint(this, 'ImgTransAccessPoint920', {
             objectLambdaConfiguration: {
                 supportingAccessPoint: standardAccessPoint.attrArn,
                 transformationConfigurations: [{
@@ -313,6 +340,6 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
             ],
         }));
 
-        return imageTransformationFunction;
+        return [standardAccessPoint, objectLambdaAccessPoint460, objectLambdaAccessPoint920];
     }
 }
