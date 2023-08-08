@@ -3,7 +3,7 @@ import {aws_s3objectlambda as s3objectlambda, Duration, Fn} from 'aws-cdk-lib';
 import {
     AllowedMethods,
     BehaviorOptions,
-    CachedMethods,
+    CachedMethods, CachePolicy, CacheQueryStringBehavior,
     CfnDistribution,
     CfnOriginAccessControl,
     Distribution,
@@ -11,6 +11,7 @@ import {
     IOrigin,
     LambdaEdgeEventType,
     OriginBindConfig,
+    OriginRequestPolicy,
     PriceClass,
     SecurityPolicyProtocol,
     SSLMethod,
@@ -21,6 +22,7 @@ import {AaaaRecord, ARecord, IHostedZone, PublicHostedZone, RecordTarget} from "
 import {DnsValidatedCertificate} from "aws-cdk-lib/aws-certificatemanager";
 import {BlockPublicAccess, Bucket, CfnAccessPoint, HttpMethods} from "aws-cdk-lib/aws-s3";
 import {
+    AnyPrincipal,
     ArnPrincipal,
     CompositePrincipal,
     ManagedPolicy,
@@ -166,6 +168,15 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
                 compress: true,
                 allowedMethods: AllowedMethods.ALLOW_GET_HEAD,
                 cachedMethods: CachedMethods.CACHE_GET_HEAD,
+                cachePolicy: new CachePolicy(this, 'OptimizedImgDeliveryCachePolicy', {
+                    maxTtl: Duration.seconds(10),
+                    minTtl: Duration.seconds(5),
+                    defaultTtl: Duration.seconds(1),
+                    enableAcceptEncodingBrotli: true,
+                    enableAcceptEncodingGzip: true,
+                    queryStringBehavior: CacheQueryStringBehavior.allowList("transformation-template")
+                }),
+                originRequestPolicy: OriginRequestPolicy.ALL_VIEWER,
                 edgeLambdas: [
                     {
                         functionVersion: new NodejsFunction(this, 'OptimizedImgDeliveryOriginReqFunc', {
@@ -282,10 +293,13 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
                 forceDockerBundling: true,
                 nodeModules: ['sharp']
             },
+            environment: {
+                BUCKET_NAME: this.imagesBucket.bucketName,
+            }
         });
 
         imageTransformationFunction.addPermission('OriginResponseInvokePermission', {
-            principal: new ArnPrincipal(`arn:aws:iam::${cdk.Stack.of(this).account}:role/${this._originResponseRef}`),
+            principal: new ArnPrincipal(`arn:aws:iam::${this.account}:role/${this._originResponseRef}`),
         });
 
         const standardAccessPoint = new CfnAccessPoint(this, 'ImageTransformAccessPoint', {
@@ -298,7 +312,17 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
                 restrictPublicBuckets: true
             }
         });
-         const objectLambdaAccessPoint460 = new s3objectlambda.CfnAccessPoint(this, 'ImgTransAccessPoint460', {
+        this.imagesBucket.addToResourcePolicy(new PolicyStatement({
+            actions: ['s3:GetObject', 's3:ListBucket'],
+            resources: [this.imagesBucket.bucketArn, `${this.imagesBucket.bucketArn}/*`],
+            principals: [new ArnPrincipal(`arn:aws:iam::${this.account}:role/${this._originResponseRef}`)],
+            conditions: {
+                'StringEquals': {
+                    's3:DataAccessPointArn': standardAccessPoint.attrArn
+                }
+            }
+        }));
+        const objectLambdaAccessPoint460 = new s3objectlambda.CfnAccessPoint(this, 'ImgTransAccessPoint460', {
             objectLambdaConfiguration: {
                 supportingAccessPoint: standardAccessPoint.attrArn,
                 transformationConfigurations: [{
