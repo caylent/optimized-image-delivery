@@ -169,14 +169,14 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
                 allowedMethods: AllowedMethods.ALLOW_GET_HEAD,
                 cachedMethods: CachedMethods.CACHE_GET_HEAD,
                 cachePolicy: new CachePolicy(this, 'OptimizedImgDeliveryCachePolicy', {
-                    maxTtl: Duration.seconds(10),
+                    maxTtl: Duration.seconds(90),
                     minTtl: Duration.seconds(5),
-                    defaultTtl: Duration.seconds(1),
+                    defaultTtl: Duration.seconds(10),
                     enableAcceptEncodingBrotli: true,
                     enableAcceptEncodingGzip: true,
                     queryStringBehavior: CacheQueryStringBehavior.allowList("transformation-template")
                 }),
-                originRequestPolicy: OriginRequestPolicy.ALL_VIEWER,
+                originRequestPolicy: OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
                 edgeLambdas: [
                     {
                         functionVersion: new NodejsFunction(this, 'OptimizedImgDeliveryOriginReqFunc', {
@@ -261,6 +261,15 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
             ],
             versioned: false,
             blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
+            lifecycleRules: [
+                {
+                    id: 'optimized-images-10d-ttl',
+                    expiration: Duration.days(10),
+                    tagFilters: {
+                        'image:optimized': 'true'
+                    }
+                }
+            ],
         });
     }
 
