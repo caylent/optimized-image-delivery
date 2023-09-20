@@ -14,5 +14,6 @@ new OptimizedImageDeliveryStack(app, 'OptimizedImageDeliveryStack', {
     env: {account: process.env.CDK_DEFAULT_ACCOUNT, region: process.env.CDK_DEFAULT_REGION},
     apexDomain: process.env.APEX_DOMAIN,
     subdomain: process.env.SUBDOMAIN,
-    stack: process.env.STACK_ID
+    stack: process.env.STACK_ID,
+    tags: JSON.parse(process.env.TAGS || "{}")
 });

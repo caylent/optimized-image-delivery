@@ -39,4 +39,5 @@ jobs:
         APEX_DOMAIN: ${{ secrets.APEX_DOMAIN }}
         SUBDOMAIN: ${{ secrets.SUBDOMAIN }}
         STACK_ID: ${{ github.ref_name }}
+        TAGS: ${{ vars.STACK_TAGS }}
       run: npx aws-cdk deploy --require-approval never
