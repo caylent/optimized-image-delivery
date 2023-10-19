@@ -137,8 +137,9 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
                 bind: () => ({} as OriginBindConfig)
             } as IOrigin, // because the S3Origin construct doesn't support Origin Access Control yet
         };
-        const [standardAccessPoint, objectLambdaAccessPoint460, objectLambdaAccessPoint920] = this.createImageTransformationFunction();
-        return new Distribution(this, "SiteDistribution", {
+        const {standardAccessPoint, objectLambdaAccessPoint460, objectLambdaAccessPoint920, imageTransformationFunction} = this.createImageTransformationFunction();
+        let originResponseFunctionRole;
+        const distribution = new Distribution(this, "SiteDistribution", {
             domainNames: [`${this.subdomain}.${this.apexDomain}`],
             certificate: siteCertificate,
             errorResponses: [
@@ -208,7 +209,7 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
                             entry: path.join(__dirname, 'lambda@edge', 'origin.response.js'),
                             handler: 'handler',
                             memorySize: 128,
-                            role: new Role(this, 'OptimizedImgDeliveryOriginResRole', {
+                            role: originResponseFunctionRole = new Role(this, 'OptimizedImgDeliveryOriginResRole', {
                                 roleName: this._originResponseRef,
                                 assumedBy: new CompositePrincipal(new ServicePrincipal('edgelambda.amazonaws.com'), new ServicePrincipal('lambda.amazonaws.com')),
                                 managedPolicies: [
@@ -247,6 +248,12 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
                 ]
             },
         });
+
+        imageTransformationFunction.addPermission('OriginResponseInvokePermission', {
+            principal: originResponseFunctionRole,
+        });
+
+        return distribution;
     }
 
     private createImagesBucket() {
@@ -305,10 +312,6 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
             environment: {
                 BUCKET_NAME: this.imagesBucket.bucketName,
             }
-        });
-
-        imageTransformationFunction.addPermission('OriginResponseInvokePermission', {
-            principal: new ArnPrincipal(`arn:aws:iam::${this.account}:role/${this._originResponseRef}`),
         });
 
         const standardAccessPoint = new CfnAccessPoint(this, 'ImageTransformAccessPoint', {
@@ -373,6 +376,6 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
             ],
         }));
 
-        return [standardAccessPoint, objectLambdaAccessPoint460, objectLambdaAccessPoint920];
+        return {standardAccessPoint, objectLambdaAccessPoint460, objectLambdaAccessPoint920, imageTransformationFunction};
     }
 }
