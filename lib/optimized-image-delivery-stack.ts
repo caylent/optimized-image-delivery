@@ -293,7 +293,7 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
             runtime: Runtime.NODEJS_18_X,
             architecture: Architecture.X86_64,
             timeout: Duration.seconds(40),
-            logRetention: RetentionDays.FIVE_DAYS,
+            logRetention: RetentionDays.TWO_MONTHS,
             functionName: `image-transform-${this.stack}`,
             entry: path.join(__dirname, 'lambda', 'image-transform.js'),
             handler: 'handler',
