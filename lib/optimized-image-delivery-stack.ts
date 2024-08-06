@@ -19,10 +19,8 @@ import {
 } from 'aws-cdk-lib/aws-cloudfront';
 import {Construct} from 'constructs';
 import {AaaaRecord, ARecord, IHostedZone, PublicHostedZone, RecordTarget} from "aws-cdk-lib/aws-route53";
-import {DnsValidatedCertificate} from "aws-cdk-lib/aws-certificatemanager";
 import {BlockPublicAccess, Bucket, CfnAccessPoint, HttpMethods} from "aws-cdk-lib/aws-s3";
 import {
-    AnyPrincipal,
     ArnPrincipal,
     CompositePrincipal,
     ManagedPolicy,
@@ -36,6 +34,7 @@ import {NodejsFunction} from "aws-cdk-lib/aws-lambda-nodejs";
 import {Architecture, Runtime} from "aws-cdk-lib/aws-lambda";
 import {RetentionDays} from "aws-cdk-lib/aws-logs";
 import * as path from 'path';
+import {Certificate, CertificateValidation} from "aws-cdk-lib/aws-certificatemanager";
 
 export interface OptimizedImageDeliveryStackProps extends cdk.StackProps {
     apexDomain: string;
@@ -126,11 +125,10 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
     }
 
     private createCloudfrontDistribution(zone: IHostedZone) {
-        const siteCertificate = new DnsValidatedCertificate(this, "WebsiteCertificate", {
+        const siteCertificate = new Certificate(this, 'WebsiteCertificate', {
             domainName: `${this.subdomain}.${this.apexDomain}`,
-            hostedZone: zone,
-            region: "us-east-1"  //standard for acm certs
-        });
+            validation: CertificateValidation.fromDns(zone),
+        })
 
         const defaultBehaviorOptions: Pick<BehaviorOptions, "origin"> & Partial<BehaviorOptions> = {
             origin: {
@@ -169,7 +167,7 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
                 compress: true,
                 allowedMethods: AllowedMethods.ALLOW_GET_HEAD,
                 cachedMethods: CachedMethods.CACHE_GET_HEAD,
-                cachePolicy: new CachePolicy(this, 'OptimizedImgDeliveryCachePolicy', {
+                cachePolicy: new CachePolicy(this, 'OptimizedImgDelivery91af3CachePolicy', {
                     maxTtl: Duration.seconds(90),
                     minTtl: Duration.seconds(5),
                     defaultTtl: Duration.seconds(10),
@@ -258,7 +256,7 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
 
     private createImagesBucket() {
         return new Bucket(this, "ImagesBucket", {
-            bucketName: `optimizedimagedelivery-a79b75-${this.stack}`,
+            bucketName: `optimizedimagedelivery-a70b75-${this.stack}`,
             cors: [
                 {
                     allowedMethods: [HttpMethods.GET, HttpMethods.HEAD],
@@ -289,7 +287,7 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
             ]
         });
 
-        const imageTransformationFunction = new NodejsFunction(this, 'ImageTransformationFunc', {
+        const imageTransformationFunction = new NodejsFunction(this, 'ImageTransformFunc', {
             runtime: Runtime.NODEJS_18_X,
             architecture: Architecture.X86_64,
             timeout: Duration.seconds(40),
