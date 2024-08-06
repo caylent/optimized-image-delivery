@@ -294,7 +294,7 @@ export class OptimizedImageDeliveryStack extends cdk.Stack {
             architecture: Architecture.X86_64,
             timeout: Duration.seconds(40),
             logRetention: RetentionDays.TWO_MONTHS,
-            functionName: `image-transform-${this.stack}`,
+            functionName: `image-transform-af71-${this.stack}`,
             entry: path.join(__dirname, 'lambda', 'image-transform.js'),
             handler: 'handler',
             memorySize: 10240,
