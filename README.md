@@ -1,6 +1,6 @@
 # Optimized Image Delivery
 
-This is the implementation of the [Optimized Image Delivery](https://caylent.com/blog/optimized-image-delivery) blog post written by the Caylent team.
+This is the implementation of the [Programmatic Image Conversion to WebP Using Amazon S3, CloudFront, and Lambda](https://caylent.com/blog/converting-images-to-webp-using-s3-object-lambda) blog post written by the Caylent team.
 
 The [architecture](https://lucid.app/documents/view/a2c23ff5-22e5-4c31-9b27-a5d74ecbb700) is as follows:
 
